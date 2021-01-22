@@ -3,7 +3,6 @@ package squashfs
 import (
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -38,13 +37,13 @@ func TestSquashfs(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	errs := fil.(*File).ExtractTo(wd + "/testing")
-	if len(errs) > 0 {
-		t.Fatal(errs)
+	err = fil.(*File).ExtractTo(wd + "/testing")
+	if err != nil {
+		t.Fatal(err)
 	}
-	errs = rdr.ExtractTo(wd + "/testing/" + squashfsName + ".d")
-	if len(errs) > 0 {
-		t.Fatal(errs)
+	err = rdr.ExtractTo(wd + "/testing/" + squashfsName + ".d")
+	if err != nil {
+		t.Fatal(err)
 	}
 	t.Fatal("No Problems")
 }
@@ -69,14 +68,20 @@ func TestAppImage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer aiFil.Close()
+	err = os.RemoveAll(wd + "/testing/firefox")
+	if err != nil {
+		t.Fatal(err)
+	}
 	stat, _ := aiFil.Stat()
 	ai := goappimage.NewAppImage(wd + "/testing/" + appImageName)
 	rdr, err := NewSquashfsReader(io.NewSectionReader(aiFil, ai.Offset, stat.Size()-ai.Offset))
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(rdr.super.BlockLog, strconv.FormatInt(int64(rdr.super.BlockSize), 2))
-	fmt.Println(math.Log2(float64(rdr.super.BlockSize)))
+	err = rdr.ExtractWithOptions(wd+"/testing/firefox", false, false, os.ModePerm, true)
+	if err != nil {
+		t.Fatal(err)
+	}
 	t.Fatal("No problemo!")
 }
 
@@ -114,6 +119,7 @@ func TestUnsquashfs(t *testing.T) {
 }
 
 func BenchmarkDragRace(b *testing.B) {
+	b.SetParallelism(1)
 	wd, err := os.Getwd()
 	if err != nil {
 		b.Fatal(err)
@@ -147,19 +153,23 @@ func BenchmarkDragRace(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	errs := rdr.ExtractTo(wd + "/testing/firefox")
-	if len(errs) > 0 {
-		b.Fatal(errs)
+	err = rdr.ExtractTo(wd + "/testing/firefox")
+	if err != nil {
+		b.Fatal(err)
 	}
 	libTime := time.Since(start)
 	b.Log("Unsqushfs:", unsquashTime.Round(time.Millisecond))
 	b.Log("Library:", libTime.Round(time.Millisecond))
 	b.Log("unsquashfs is " + strconv.FormatFloat(float64(libTime.Milliseconds())/float64(unsquashTime.Milliseconds()), 'f', 2, 64) + "x faster")
+	b.Fatal("END")
 }
 
 func downloadTestAppImage(dir string) error {
 	//seems to time out on slow connections. Might fix that at some point... or not. It's just a test...
-	os.Mkdir(dir, os.ModePerm)
+	err := os.Mkdir(dir, os.ModePerm)
+	if err != nil {
+		return err
+	}
 	appImage, err := os.Create(dir + "/" + appImageName)
 	if err != nil {
 		return err

@@ -107,3 +107,31 @@ func (f *FileFS) ReadFile(name string) ([]byte, error) {
 	_, err = io.Copy(&buf, tmp)
 	return buf.Bytes(), err
 }
+
+//Stat is the same as Open, but returns the file as a fs.FileInfo.
+func (f *FileFS) Stat(name string) (fs.FileInfo, error) {
+	fil, err := f.Open(name)
+	if err != nil {
+		if pathErr, ok := err.(*fs.PathError); ok {
+			pathErr.Op = "stat"
+			pathErr.Path = name
+			return nil, pathErr
+		}
+		return nil, err
+	}
+	return fil.(*File), nil
+}
+
+//Sub returns a new fs.FS at the given directory
+func (f *FileFS) Sub(dir string) (fs.FS, error) {
+	fil, err := f.Open(dir)
+	if err != nil {
+		if pathErr, ok := err.(*fs.PathError); ok {
+			pathErr.Op = "sub"
+			pathErr.Path = dir
+			return nil, pathErr
+		}
+		return nil, err
+	}
+	return fil.(*File).FileCore.AsFS()
+}

@@ -19,7 +19,7 @@ type File struct {
 
 //AsFile returns the file as a File.
 func (f *FileCore) AsFile() *File {
-	fil := &File{
+	fil := File{
 		FileCore: f,
 		mode:     fs.FileMode(f.in.Permissions),
 	}
@@ -34,15 +34,13 @@ func (f *FileCore) AsFile() *File {
 			fil.directory = nil
 		}
 	}
-	if f.IsFile() {
+	if fil.IsFile() {
 		rdr, err := f.newFileReader()
 		if err == nil {
 			fil.rdr = rdr
 		}
 	}
-	return &File{
-		FileCore: f,
-	}
+	return &fil
 }
 
 //Name is the file's name (not including path)

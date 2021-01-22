@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"os"
-	"strings"
+	"path/filepath"
 	"time"
 
 	"github.com/CalebQ42/squashfs/internal/directory"
@@ -118,13 +119,13 @@ func (f *FileCore) GetSymlinkFile() (*FileCore, error) {
 //Will NOT try to keep symlinks valid, folders extracted will have the permissions set by the squashfs, but the folder to make path will have full permissions (777).
 //
 //Will try it's best to extract all files, and if any errors come up, they will be appended to the error slice that's returned.
-func (f *FileCore) ExtractTo(path string) []error {
+func (f *FileCore) ExtractTo(path string) error {
 	return f.ExtractWithOptions(path, false, false, os.ModePerm, false)
 }
 
 //ExtractSymlink is similar to ExtractTo, but when it extracts a symlink, it instead extracts the file associated with the symlink in it's place.
 //This is the same as ExtractWithOptions(path, true, false, os.ModePerm, false)
-func (f *FileCore) ExtractSymlink(path string) []error {
+func (f *FileCore) ExtractSymlink(path string) error {
 	return f.ExtractWithOptions(path, true, false, os.ModePerm, false)
 }
 
@@ -139,189 +140,121 @@ func (f *FileCore) ExtractSymlink(path string) []error {
 //If unbreakSymlink is set and the file cannot be extracted, a ErrBrokenSymlink will be appended to the returned error slice.
 //
 //folderPerm only applies to the folders created to get to path. Folders from the archive are given the correct permissions defined by the archive.
-func (f *FileCore) ExtractWithOptions(path string, dereferenceSymlink, unbreakSymlink bool, folderPerm os.FileMode, verbose bool) (errs []error) {
-	errs = make([]error, 0)
+func (f *FileCore) ExtractWithOptions(path string, dereferenceSymlink, unbreakSymlink bool, folderPerm os.FileMode, verbose bool) error {
+	path = filepath.Clean(path)
 	err := os.MkdirAll(path, folderPerm)
 	if err != nil {
-		return []error{err}
+		return err
 	}
-	fFile := f.AsFile()
-	switch {
-	case f.IsDir():
-		if f.name != "" {
-			//TODO: check if folder is present, and if so, try to set it's permission
-			err = os.Mkdir(path+"/"+f.name, os.ModePerm)
-			if err != nil {
-				if verbose {
-					fmt.Println("Error while making: ", path+"/"+f.name)
-					fmt.Println(err)
-				}
-				errs = append(errs, err)
-				return
-			}
-			var fil *os.File
-			fil, err = os.Open(path + "/" + f.name)
-			if err != nil {
-				if verbose {
-					fmt.Println("Error while opening:", path+"/"+f.name)
-					fmt.Println(err)
-				}
-				errs = append(errs, err)
-				return
-			}
-			fil.Chown(int(f.r.idTable[f.in.Header.UID]), int(f.r.idTable[f.in.Header.GID]))
-			//don't mention anything when it fails. Because it fails often. Probably has something to do about uid & gid 0
-			// if err != nil {
-			// 	if verbose {
-			// 		fmt.Println("Error while changing owner:", path+"/"+f.Name)
-			// 		fmt.Println(err)
-			// 	}
-			// 	errs = append(errs, err)
-			// }
-			err = fil.Chmod(fFile.Mode())
-			if err != nil {
-				if verbose {
-					fmt.Println("Error while changing owner:", path+"/"+f.name)
-					fmt.Println(err)
-				}
-				errs = append(errs, err)
-			}
-		}
-		var children []fs.DirEntry
-		children, err = fFile.ReadDir(-1)
-		if err != nil {
-			if verbose {
-				fmt.Println("Error getting children for:", f.Path())
-				fmt.Println(err)
-			}
-			errs = append(errs, err)
-			return
-		}
-		finishChan := make(chan []error)
-		for _, child := range children {
-			go func(child *File) {
-				if f.name == "" {
-					finishChan <- child.ExtractWithOptions(path, dereferenceSymlink, unbreakSymlink, folderPerm, verbose)
-				} else {
-					finishChan <- child.ExtractWithOptions(path+"/"+f.name, dereferenceSymlink, unbreakSymlink, folderPerm, verbose)
-				}
-			}(child.(*File))
-		}
-		for range children {
-			errs = append(errs, (<-finishChan)...)
-		}
-		return
-	case f.IsFile():
-		var fil *os.File
-		fil, err = os.Create(path + "/" + f.name)
+	path += "/" + f.name
+	file := f.AsFile()
+	if f.IsFile() {
+		var realFile *os.File
+		realFile, err = os.Create(path)
 		if os.IsExist(err) {
-			err = os.Remove(path + "/" + f.name)
+			err = os.Remove(path)
 			if err != nil {
 				if verbose {
-					fmt.Println("Error while making:", path+"/"+f.name)
-					fmt.Println(err)
+					log.Println("File exists at", path, "and cannot remove")
+					log.Println(err)
 				}
-				errs = append(errs, err)
-				return
+				return err
 			}
-			fil, err = os.Create(path + "/" + f.name)
+			realFile, err = os.Create(path)
 			if err != nil {
 				if verbose {
-					fmt.Println("Error while making:", path+"/"+f.name)
-					fmt.Println(err)
+					log.Println("Cannot create file at", path)
+					log.Println(err)
 				}
-				errs = append(errs, err)
-				return
+				return err
 			}
 		} else if err != nil {
 			if verbose {
-				fmt.Println("Error while making:", path+"/"+f.name)
-				fmt.Println(err)
+				log.Println("Cannot create file at", path)
+				log.Println(err)
 			}
-			errs = append(errs, err)
-			return
-		} //Since we will be reading from the file
-		_, err = io.Copy(fil, fFile)
+			return err
+		}
+		realFile.Chmod(file.mode)
+		realFile.Chown(int(f.r.idTable[f.in.UID]), int(f.r.idTable[f.in.GID]))
+		_, err = io.Copy(realFile, file)
 		if err != nil {
 			if verbose {
-				fmt.Println("Error while Copying data to:", path+"/"+f.name)
-				fmt.Println(err)
+				log.Println("Error while copying data to", path)
+				log.Println(err)
 			}
-			errs = append(errs, err)
-			return
+			return err
 		}
-		fil.Chown(int(f.r.idTable[f.in.Header.UID]), int(f.r.idTable[f.in.Header.GID]))
-		//don't mention anything when it fails. Because it fails often. Probably has something to do about uid & gid 0
-		// if err != nil {
-		// 	if verbose {
-		// 		fmt.Println("Error while changing owner:", path+"/"+f.Name)
-		// 		fmt.Println(err)
-		// 	}
-		// 	errs = append(errs, err)
-		// 	return
-		// }
-		err = fil.Chmod(fFile.Mode())
+		return nil
+	} else if f.IsDir() {
+		err = os.Mkdir(path, file.mode)
+		if !os.IsExist(err) && err != nil {
+			if verbose {
+				log.Println("Error while creating folder", path)
+				log.Println(err)
+			}
+			return err
+		}
+		var realDir *os.File
+		realDir, err = os.Open(path)
 		if err != nil {
 			if verbose {
-				fmt.Println("Error while setting permissions for:", path+"/"+f.name)
-				fmt.Println(err)
+				log.Println("Error while opening folder", path)
+				log.Println(err)
 			}
-			errs = append(errs, err)
+			return err
 		}
-		return
-	case f.IsSymlink():
-		var fil *FileCore
-		symPath := f.SymlinkPath()
-		if dereferenceSymlink {
-			fil, err = f.GetSymlinkFile()
+		realDir.Chmod(file.mode)
+		realDir.Chown(int(f.r.idTable[f.in.UID]), int(f.r.idTable[f.in.GID]))
+		var children []fs.DirEntry
+		children, err = file.ReadDir(0)
+		if err != nil {
+			if verbose {
+				log.Println("Error while getting children", path)
+				log.Println(err)
+			}
+			return err
+		}
+		errChan := make(chan error)
+		for _, child := range children {
+			go func(fil *File) {
+				errChan <- fil.ExtractWithOptions(path, dereferenceSymlink, unbreakSymlink, folderPerm, verbose)
+			}(child.(*File))
+		}
+		for range children {
+			err = <-errChan
 			if err != nil {
 				if verbose {
-					fmt.Println("Symlink path(", symPath, ") is invalid:"+path+"/"+f.name)
-					fmt.Println(err)
+					log.Println("Error while walking", path)
+					log.Println(err)
 				}
-				errs = append(errs, err)
-			}
-			fil.name = f.name
-			extracSymErrs := fil.ExtractWithOptions(path, dereferenceSymlink, unbreakSymlink, folderPerm, verbose)
-			if len(extracSymErrs) > 0 {
-				if verbose {
-					fmt.Println("Error(s) while extracting the symlink's file:", path+"/"+f.name)
-					fmt.Println(extracSymErrs)
-				}
-				errs = append(errs, extracSymErrs...)
-			}
-			return
-		} else if unbreakSymlink {
-			fil, err = f.GetSymlinkFile()
-			if fil != nil {
-				symPath = path + "/" + symPath
-				paths := strings.Split(symPath, "/")
-				extracSymErrs := fil.ExtractWithOptions(strings.Join(paths[:len(paths)-1], "/"), dereferenceSymlink, unbreakSymlink, folderPerm, verbose)
-				if len(extracSymErrs) > 0 {
-					if verbose {
-						fmt.Println("Error(s) while extracting the symlink's file:", path+"/"+f.name)
-						fmt.Println(extracSymErrs)
-					}
-					errs = append(errs, extracSymErrs...)
-				}
-			} else {
-				if verbose {
-					fmt.Println("Symlink path(", symPath, ") is outside the archive:"+path+"/"+f.name)
-					fmt.Println(err)
-				}
-				errs = append(errs, err)
+				return err
 			}
 		}
-		err = os.Symlink(f.SymlinkPath(), path+"/"+f.name)
+		return nil
+	} else if f.IsSymlink() {
+		if dereferenceSymlink {
+			var symFil *FileCore
+			symFil, err = f.GetSymlinkFile()
+			if err != nil {
+				symFil.name = f.name
+				err = symFil.ExtractWithOptions(filepath.Dir(path), dereferenceSymlink, unbreakSymlink, folderPerm, verbose)
+				if err != nil {
+					goto symlinkCreate
+				}
+			}
+		}
+	symlinkCreate:
+		os.Remove(path)
+		err = os.Symlink(f.SymlinkPath(), path)
 		if err != nil {
-			if verbose {
-				fmt.Println("Error while making symlink:", path+"/"+f.name)
-				fmt.Println(err)
-			}
-			errs = append(errs, err)
+			fmt.Println("YO")
+			return err
 		}
+		//TODO: unbreakSymlink
+		return nil
 	}
-	return
+	return errors.New("Invalid file type")
 }
 
 //ReadDirFromInode returns a fully populated Directory from a given Inode.
