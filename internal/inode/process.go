@@ -10,7 +10,6 @@ import (
 //Info holds the actual Inode. Due to each inode type being a different type, it's store as an interface{}
 type Inode struct {
 	Info interface{} //Info is the parsed specific data. It's type is defined by Type.
-	Type int         //Type the inode type defined in the header. Here so it's easy to access
 	Header
 }
 
@@ -22,7 +21,7 @@ func ProcessInode(br io.Reader, blockSize uint32) (*Inode, error) {
 		return nil, err
 	}
 	var info interface{}
-	switch head.InodeType {
+	switch head.Type {
 	case DirType:
 		var inode Dir
 		err = binary.Read(br, binary.LittleEndian, &inode)
@@ -123,7 +122,6 @@ func ProcessInode(br io.Reader, blockSize uint32) (*Inode, error) {
 		info = inode
 	}
 	return &Inode{
-		Type:   int(head.InodeType),
 		Header: head,
 		Info:   info,
 	}, nil

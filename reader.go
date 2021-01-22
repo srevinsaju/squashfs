@@ -26,13 +26,11 @@ var (
 	ErrOptions = errors.New("Possibly incompatible compressor options")
 )
 
-//TODO: implement fs.FS, possibly more FS types for compatibility. Most of this work will mostly be handed off to root anyway so this shouldn't be too difficult.
-
-//Reader processes and reads a squashfs archive.
+//Reader processes and reads a squashfs archive. Exposes the root folder (FileFS)
 type Reader struct {
+	*FileFS
 	r            io.ReaderAt
 	decompressor compression.Decompressor
-	root         *File
 	fragOffsets  []uint64
 	idTable      []uint32
 	super        superblock
@@ -132,7 +130,8 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 		if err != nil {
 			return nil, err
 		}
-		idRdr, err := rdr.newMetadataReader(int64(blockOffsets[i]))
+		var idRdr *metadataReader
+		idRdr, err = rdr.newMetadataReader(int64(blockOffsets[i]))
 		if err != nil {
 			return nil, err
 		}
@@ -147,6 +146,21 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 		}
 		unread -= read
 	}
+	mr, err := rdr.newMetadataReaderFromInodeRef(rdr.super.RootInodeRef)
+	if err != nil {
+		return nil, err
+	}
+	var root FileCore
+	root.in, err = inode.ProcessInode(mr, rdr.super.BlockSize)
+	if err != nil {
+		return nil, err
+	}
+	root.dir = "/"
+	root.r = &rdr
+	rdr.FileFS, err = root.AsFS()
+	if err != nil {
+		return nil, err
+	}
 	if hasUnsupportedOptions {
 		return &rdr, ErrOptions
 	}
@@ -156,120 +170,4 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 //ModTime is the last time the file was modified/created.
 func (r *Reader) ModTime() time.Time {
 	return time.Unix(int64(r.super.CreationTime), 0)
-}
-
-//ExtractTo tries to extract ALL files to the given path. This is the same as getting the root folder and extracting that.
-func (r *Reader) ExtractTo(path string) []error {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return []error{err}
-		}
-	}
-	return r.root.ExtractTo(path)
-}
-
-//GetRootFolder returns a squashfs.File that references the root directory of the squashfs archive.
-func (r *Reader) GetRootFolder() (*File, error) {
-	if r.root != nil {
-		return r.root, nil
-	}
-	mr, err := r.newMetadataReaderFromInodeRef(r.super.RootInodeRef)
-	if err != nil {
-		return nil, err
-	}
-	var root File
-	root.in, err = inode.ProcessInode(mr, r.super.BlockSize)
-	if err != nil {
-		return nil, err
-	}
-	root.dir = "/"
-	root.filType = root.in.Type
-	root.r = r
-	r.root = &root
-	return r.root, nil
-}
-
-//GetAllFiles returns a slice of ALL files and folders contained in the squashfs.
-func (r *Reader) GetAllFiles() (fils []*File, err error) {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return r.root.GetChildrenRecursively()
-}
-
-//FindFile returns the first file (in the same order as Reader.GetAllFiles) that the given function returns true for. Returns nil if nothing is found.
-func (r *Reader) FindFile(query func(*File) bool) *File {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil
-		}
-	}
-	fils, err := r.root.GetChildren()
-	if err != nil {
-		return nil
-	}
-	var childrenDirs []*File
-	for _, fil := range fils {
-		if query(fil) {
-			return fil
-		}
-		if fil.IsDir() {
-			childrenDirs = append(childrenDirs, fil)
-		}
-	}
-	for len(childrenDirs) != 0 {
-		var tmp []*File
-		for _, dirs := range childrenDirs {
-			chil, err := dirs.GetChildren()
-			if err != nil {
-				return nil
-			}
-			for _, child := range chil {
-				if query(child) {
-					return child
-				}
-				if child.IsDir() {
-					tmp = append(tmp, child)
-				}
-			}
-		}
-		childrenDirs = tmp
-	}
-	return nil
-}
-
-//FindAll returns all files where the given function returns true.
-func (r *Reader) FindAll(query func(*File) bool) (all []*File) {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil
-		}
-	}
-	fils, err := r.root.GetChildrenRecursively()
-	if err != nil {
-		return nil
-	}
-	for _, fil := range fils {
-		if query(fil) {
-			all = append(all, fil)
-		}
-	}
-	return
-}
-
-//GetFileAtPath will return the file at the given path. If the file cannot be found, will return nil.
-func (r *Reader) GetFileAtPath(filepath string) *File {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil
-		}
-	}
-	return r.root.GetFileAtPath(filepath)
 }

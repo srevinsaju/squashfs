@@ -34,11 +34,11 @@ func TestSquashfs(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Println("stuff", rdr.super.CompressionType)
-	fil := rdr.GetFileAtPath("*.desktop")
-	if fil == nil {
-		t.Fatal("Can't find desktop fil")
+	fil, err := rdr.Open("*.desktop")
+	if err != nil {
+		t.Fatal(err)
 	}
-	errs := fil.ExtractTo(wd + "/testing")
+	errs := fil.(*File).ExtractTo(wd + "/testing")
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}

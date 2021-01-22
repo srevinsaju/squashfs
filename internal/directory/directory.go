@@ -47,8 +47,8 @@ func NewEntry(rdr io.Reader) (Entry, error) {
 //Directory is an entry in the directory table of a squashfs.
 //Will only have multiple headers if there are more then 256 entries
 type Directory struct {
-	Headers []Header
-	Entries []Entry
+	Headers []*Header
+	Entries []*Entry
 }
 
 //NewDirectory reads the directory from rdr
@@ -71,7 +71,7 @@ func NewDirectory(base io.Reader, size uint32) (*Directory, error) {
 		if hdr.Count%256 > 0 {
 			headers++
 		}
-		dir.Headers = append(dir.Headers, hdr)
+		dir.Headers = append(dir.Headers, &hdr)
 		for i := uint32(0); i < hdr.Count; i++ {
 			if i != 0 && i%256 == 0 {
 				var newHdr Header
@@ -79,15 +79,15 @@ func NewDirectory(base io.Reader, size uint32) (*Directory, error) {
 				if err != nil {
 					return nil, err
 				}
-				dir.Headers = append(dir.Headers, newHdr)
+				dir.Headers = append(dir.Headers, &newHdr)
 			}
 			var ent Entry
 			ent, err = NewEntry(rdr)
 			if err != nil {
 				return nil, err
 			}
-			ent.Header = &dir.Headers[len(dir.Headers)-1]
-			dir.Entries = append(dir.Entries, ent)
+			ent.Header = dir.Headers[len(dir.Headers)-1]
+			dir.Entries = append(dir.Entries, &ent)
 		}
 	}
 	return &dir, nil
