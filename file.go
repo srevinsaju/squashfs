@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path"
 	"strings"
@@ -36,14 +37,12 @@ var (
 //
 //Implements os.FileInfo and io.Reader
 type File struct {
-	reader  io.Reader
-	Parent  *File
-	r       *Reader //Underlying reader. When writing, will probably be an os.File. When reading this is kept nil UNTIL reading to save memory.
-	in      *inode.Inode
-	name    string
-	dir     string
-	filType int //The file's type, using inode types.
-
+	reader io.Reader
+	Parent *File
+	r      *Reader //Underlying reader. When writing, will probably be an os.File. When reading this is kept nil UNTIL reading to save memory.
+	in     *inode.Inode
+	name   string
+	dir    string
 }
 
 //get a File from a directory.entry
@@ -55,7 +54,6 @@ func (r *Reader) newFileFromDirEntry(entry *directory.Entry) (fil *File, err err
 	}
 	fil.name = entry.Name
 	fil.r = r
-	fil.filType = fil.in.Type
 	return
 }
 
@@ -66,7 +64,7 @@ func (f *File) Name() string {
 
 //Size is the complete size of the file. Zero if it's not a file.
 func (f *File) Size() int64 {
-	switch f.filType {
+	switch f.in.Type {
 	case inode.FileType:
 		return int64(f.in.Info.(inode.File).Size)
 	case inode.ExtFileType:
@@ -97,18 +95,16 @@ func (f *File) Sys() interface{} {
 	return f.reader
 }
 
-//TODO: Implement below when 1.16 drops to satisfy fs.File
-
 //Stat simply returns the file. It's simply here to satisfy fs.File
-// func (f *File) Stat() (fs.FileInfo, error) {
-// 	return f, nil
-// }
+func (f *File) Stat() (fs.FileInfo, error) {
+	return f, nil
+}
 
 //Close does nothing. It's simply here to satisfy fs.File
 //TODO: add actual implementation
-// func (f *File) Close() error {
-// 	return nil
-// }
+func (f *File) Close() error {
+	return nil
+}
 
 //GetChildren returns a *squashfs.File slice of every direct child of the directory. If the File is not a directory, will return ErrNotDirectory
 func (f *File) GetChildren() (children []*File, err error) {
@@ -211,35 +207,34 @@ func (f *File) GetFileAtPath(dirPath string) *File {
 	return nil
 }
 
-//TODO: add with 1.16
 //Open is the same as GetFileAtPath to implement fs.FS
-// func (f *File) Open(name string) (fs.File, error) {
-// 	tmp := f.GetFileAtPath(name)
-// 	if tmp == nil {
-// 		return tmp, fs.ErrNotExist
-// 	}
-// 	return tmp, nil
-// }
+func (f *File) Open(name string) (fs.File, error) {
+	tmp := f.GetFileAtPath(name)
+	if tmp == nil {
+		return tmp, fs.ErrNotExist
+	}
+	return tmp, nil
+}
 
 //IsDir returns if the file is a directory.
 func (f *File) IsDir() bool {
-	return f.filType == inode.DirType || f.filType == inode.ExtDirType
+	return f.in.Type == inode.DirType || f.in.Type == inode.ExtDirType
 }
 
 //IsSymlink returns if the file is a symlink.
 func (f *File) IsSymlink() bool {
-	return f.filType == inode.SymType || f.filType == inode.ExtSymType
+	return f.in.Type == inode.SymType || f.in.Type == inode.ExtSymType
 }
 
 //IsFile returns if the file is a file.
 func (f *File) IsFile() bool {
-	return f.filType == inode.FileType || f.filType == inode.ExtFileType
+	return f.in.Type == inode.FileType || f.in.Type == inode.ExtFileType
 }
 
 //SymlinkPath returns the path the symlink is pointing to. If the file ISN'T a symlink, will return an empty string.
 //If a path begins with "/" then the symlink is pointing to an absolute path (starting from root, and not a file inside the archive)
 func (f *File) SymlinkPath() string {
-	switch f.filType {
+	switch f.in.Type {
 	case inode.SymType:
 		return f.in.Info.(inode.Sym).Path
 	case inode.ExtSymType:
@@ -329,16 +324,16 @@ func (f *File) ExtractWithOptions(path string, dereferenceSymlink, unbreakSymlin
 	case f.IsDir():
 		if f.name != "" {
 			//TODO: check if folder is present, and if so, try to set it's permission
-			err = os.Mkdir(path+"/"+f.name, os.ModePerm)
-			if err != nil {
+			err = os.Mkdir(path+"/"+f.name, f.Mode())
+			var fil *os.File
+			if !os.IsExist(err) && err != nil {
 				if verbose {
-					fmt.Println("Error while making: ", path+"/"+f.name)
+					fmt.Println("Error while making:", path+"/"+f.name)
 					fmt.Println(err)
 				}
 				errs = append(errs, err)
 				return
 			}
-			var fil *os.File
 			fil, err = os.Open(path + "/" + f.name)
 			if err != nil {
 				if verbose {
@@ -348,23 +343,8 @@ func (f *File) ExtractWithOptions(path string, dereferenceSymlink, unbreakSymlin
 				errs = append(errs, err)
 				return
 			}
+			fil.Chmod(f.Mode())
 			fil.Chown(int(f.r.idTable[f.in.Header.UID]), int(f.r.idTable[f.in.Header.GID]))
-			//don't mention anything when it fails. Because it fails often. Probably has something to do about uid & gid 0
-			// if err != nil {
-			// 	if verbose {
-			// 		fmt.Println("Error while changing owner:", path+"/"+f.Name)
-			// 		fmt.Println(err)
-			// 	}
-			// 	errs = append(errs, err)
-			// }
-			err = fil.Chmod(f.Mode())
-			if err != nil {
-				if verbose {
-					fmt.Println("Error while changing owner:", path+"/"+f.name)
-					fmt.Println(err)
-				}
-				errs = append(errs, err)
-			}
 		}
 		var children []*File
 		children, err = f.GetChildren()
@@ -430,15 +410,6 @@ func (f *File) ExtractWithOptions(path string, dereferenceSymlink, unbreakSymlin
 			return
 		}
 		fil.Chown(int(f.r.idTable[f.in.Header.UID]), int(f.r.idTable[f.in.Header.GID]))
-		//don't mention anything when it fails. Because it fails often. Probably has something to do about uid & gid 0
-		// if err != nil {
-		// 	if verbose {
-		// 		fmt.Println("Error while changing owner:", path+"/"+f.Name)
-		// 		fmt.Println(err)
-		// 	}
-		// 	errs = append(errs, err)
-		// 	return
-		// }
 		err = fil.Chmod(f.Mode())
 		if err != nil {
 			if verbose {
@@ -489,12 +460,16 @@ func (f *File) ExtractWithOptions(path string, dereferenceSymlink, unbreakSymlin
 			}
 		}
 		err = os.Symlink(f.SymlinkPath(), path+"/"+f.name)
-		if err != nil {
-			if verbose {
-				fmt.Println("Error while making symlink:", path+"/"+f.name)
-				fmt.Println(err)
+		if os.IsExist(err) {
+			os.Remove(path + "/" + f.name)
+			err = os.Symlink(f.SymlinkPath(), path+"/"+f.name)
+			if err != nil {
+				if verbose {
+					fmt.Println("Error while making symlink:", path+"/"+f.name)
+					fmt.Println(err)
+				}
+				errs = append(errs, err)
 			}
-			errs = append(errs, err)
 		}
 	}
 	return
@@ -533,7 +508,7 @@ func (r *Reader) readDirFromInode(i *inode.Inode) (*directory.Directory, error) 
 	default:
 		return nil, errors.New("Not a directory inode")
 	}
-	br, err := r.newMetadataReader(int64(r.super.DirTableStart + uint64(offset)))
+	br, err := r.newMetadataReader(r.super.DirTableStart + uint64(offset))
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +525,7 @@ func (r *Reader) readDirFromInode(i *inode.Inode) (*directory.Directory, error) 
 
 //GetInodeFromEntry returns the inode associated with a given directory.Entry
 func (r *Reader) getInodeFromEntry(en *directory.Entry) (*inode.Inode, error) {
-	br, err := r.newMetadataReader(int64(r.super.InodeTableStart + uint64(en.Header.InodeOffset)))
+	br, err := r.newMetadataReader(r.super.InodeTableStart + uint64(en.Header.InodeOffset))
 	if err != nil {
 		return nil, err
 	}

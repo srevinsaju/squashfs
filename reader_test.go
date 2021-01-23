@@ -3,7 +3,6 @@ package squashfs
 import (
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"os"
 	"os/exec"
@@ -16,7 +15,7 @@ import (
 
 const (
 	downloadURL  = "https://github.com/srevinsaju/Firefox-Appimage/releases/download/firefox-v84.0.r20201221152838/firefox-84.0.r20201221152838-x86_64.AppImage"
-	appImageName = "Ultimaker_Cura-4.8.0.AppImage"
+	appImageName = "firefox-84.0.r20201221152838-x86_64.AppImage"
 	squashfsName = "balenaEtcher-1.5.113-x64.AppImage.sfs"
 )
 
@@ -71,12 +70,10 @@ func TestAppImage(t *testing.T) {
 	defer aiFil.Close()
 	stat, _ := aiFil.Stat()
 	ai := goappimage.NewAppImage(wd + "/testing/" + appImageName)
-	rdr, err := NewSquashfsReader(io.NewSectionReader(aiFil, ai.Offset, stat.Size()-ai.Offset))
+	_, err = NewSquashfsReader(io.NewSectionReader(aiFil, ai.Offset, stat.Size()-ai.Offset))
 	if err != nil {
 		t.Fatal(err)
 	}
-	fmt.Println(rdr.super.BlockLog, strconv.FormatInt(int64(rdr.super.BlockSize), 2))
-	fmt.Println(math.Log2(float64(rdr.super.BlockSize)))
 	t.Fatal("No problemo!")
 }
 
@@ -155,6 +152,7 @@ func BenchmarkDragRace(b *testing.B) {
 	b.Log("Unsqushfs:", unsquashTime.Round(time.Millisecond))
 	b.Log("Library:", libTime.Round(time.Millisecond))
 	b.Log("unsquashfs is " + strconv.FormatFloat(float64(libTime.Milliseconds())/float64(unsquashTime.Milliseconds()), 'f', 2, 64) + "x faster")
+	b.Fatal("END")
 }
 
 func downloadTestAppImage(dir string) error {

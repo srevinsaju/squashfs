@@ -23,8 +23,8 @@ type EntryRaw struct {
 
 //Entry is an entry in a directory.
 type Entry struct {
-	*Header
-	Name string
+	Header *Header
+	Name   string
 	EntryRaw
 }
 
@@ -67,10 +67,6 @@ func NewDirectory(base io.Reader, size uint32) (*Directory, error) {
 			return nil, err
 		}
 		hdr.Count++
-		headers := hdr.Count / 256
-		if hdr.Count%256 > 0 {
-			headers++
-		}
 		dir.Headers = append(dir.Headers, hdr)
 		for i := uint32(0); i < hdr.Count; i++ {
 			if i != 0 && i%256 == 0 {

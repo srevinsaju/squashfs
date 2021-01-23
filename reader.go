@@ -30,9 +30,9 @@ var (
 
 //Reader processes and reads a squashfs archive.
 type Reader struct {
+	*File        //root directory
 	r            io.ReaderAt
 	decompressor compression.Decompressor
-	root         *File
 	fragOffsets  []uint64
 	idTable      []uint32
 	super        superblock
@@ -124,29 +124,40 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 			offset += 8
 		}
 	}
-	unread := rdr.super.IDCount
 	blockOffsets := make([]uint64, int(math.Ceil(float64(rdr.super.IDCount)/2048)))
-	for i := range blockOffsets {
-		secRdr := io.NewSectionReader(r, int64(rdr.super.IDTableStart)+(8*int64(i)), 8)
-		err = binary.Read(secRdr, binary.LittleEndian, &blockOffsets[i])
-		if err != nil {
-			return nil, err
-		}
-		idRdr, err := rdr.newMetadataReader(int64(blockOffsets[i]))
+	secRdr := io.NewSectionReader(r, int64(rdr.super.IDTableStart), 8)
+	err = binary.Read(secRdr, binary.LittleEndian, &blockOffsets)
+	if err != nil {
+		return nil, err
+	}
+	unread := rdr.super.IDCount
+	for _, block := range blockOffsets {
+		var idRdr io.Reader
+		idRdr, err = rdr.newMetadataReader(block)
 		if err != nil {
 			return nil, err
 		}
 		read := uint16(math.Min(float64(unread), 2048))
-		for i := uint16(0); i < read; i++ {
-			var tmp uint32
-			err = binary.Read(idRdr, binary.LittleEndian, &tmp)
-			if err != nil {
-				return nil, err
-			}
-			rdr.idTable = append(rdr.idTable, tmp)
+		tmpSlice := make([]uint32, read)
+		err = binary.Read(idRdr, binary.LittleEndian, &tmpSlice)
+		if err != nil {
+			return nil, err
 		}
+		rdr.idTable = append(rdr.idTable, tmpSlice...)
 		unread -= read
 	}
+	rootInReader, err := rdr.newMetadataReaderFromInodeRef(rdr.super.RootInodeRef)
+	if err != nil {
+		return nil, err
+	}
+	rootIn, err := inode.ProcessInode(rootInReader, rdr.super.BlockSize)
+	if err != nil {
+		return nil, err
+	}
+	rdr.File = new(File)
+	rdr.File.dir = "/"
+	rdr.File.in = rootIn
+	rdr.File.r = &rdr
 	if hasUnsupportedOptions {
 		return &rdr, ErrOptions
 	}
@@ -156,120 +167,4 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 //ModTime is the last time the file was modified/created.
 func (r *Reader) ModTime() time.Time {
 	return time.Unix(int64(r.super.CreationTime), 0)
-}
-
-//ExtractTo tries to extract ALL files to the given path. This is the same as getting the root folder and extracting that.
-func (r *Reader) ExtractTo(path string) []error {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return []error{err}
-		}
-	}
-	return r.root.ExtractTo(path)
-}
-
-//GetRootFolder returns a squashfs.File that references the root directory of the squashfs archive.
-func (r *Reader) GetRootFolder() (*File, error) {
-	if r.root != nil {
-		return r.root, nil
-	}
-	mr, err := r.newMetadataReaderFromInodeRef(r.super.RootInodeRef)
-	if err != nil {
-		return nil, err
-	}
-	var root File
-	root.in, err = inode.ProcessInode(mr, r.super.BlockSize)
-	if err != nil {
-		return nil, err
-	}
-	root.dir = "/"
-	root.filType = root.in.Type
-	root.r = r
-	r.root = &root
-	return r.root, nil
-}
-
-//GetAllFiles returns a slice of ALL files and folders contained in the squashfs.
-func (r *Reader) GetAllFiles() (fils []*File, err error) {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil, err
-		}
-	}
-	return r.root.GetChildrenRecursively()
-}
-
-//FindFile returns the first file (in the same order as Reader.GetAllFiles) that the given function returns true for. Returns nil if nothing is found.
-func (r *Reader) FindFile(query func(*File) bool) *File {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil
-		}
-	}
-	fils, err := r.root.GetChildren()
-	if err != nil {
-		return nil
-	}
-	var childrenDirs []*File
-	for _, fil := range fils {
-		if query(fil) {
-			return fil
-		}
-		if fil.IsDir() {
-			childrenDirs = append(childrenDirs, fil)
-		}
-	}
-	for len(childrenDirs) != 0 {
-		var tmp []*File
-		for _, dirs := range childrenDirs {
-			chil, err := dirs.GetChildren()
-			if err != nil {
-				return nil
-			}
-			for _, child := range chil {
-				if query(child) {
-					return child
-				}
-				if child.IsDir() {
-					tmp = append(tmp, child)
-				}
-			}
-		}
-		childrenDirs = tmp
-	}
-	return nil
-}
-
-//FindAll returns all files where the given function returns true.
-func (r *Reader) FindAll(query func(*File) bool) (all []*File) {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil
-		}
-	}
-	fils, err := r.root.GetChildrenRecursively()
-	if err != nil {
-		return nil
-	}
-	for _, fil := range fils {
-		if query(fil) {
-			all = append(all, fil)
-		}
-	}
-	return
-}
-
-//GetFileAtPath will return the file at the given path. If the file cannot be found, will return nil.
-func (r *Reader) GetFileAtPath(filepath string) *File {
-	if r.root == nil {
-		_, err := r.GetRootFolder()
-		if err != nil {
-			return nil
-		}
-	}
-	return r.root.GetFileAtPath(filepath)
 }

@@ -25,7 +25,7 @@ const (
 
 //Header is the common header for all inodes
 type Header struct {
-	InodeType    uint16
+	Type         uint16
 	Permissions  uint16
 	UID          uint16
 	GID          uint16
@@ -66,13 +66,10 @@ func NewExtendedDirectory(rdr io.Reader) (ExtDir, error) {
 	if err != nil {
 		return inode, err
 	}
-	for i := uint16(0); i < inode.IndexCount; i++ {
-		var tmp DirIndex
-		tmp, err = NewDirectoryIndex(rdr)
-		if err != nil {
-			return inode, err
-		}
-		inode.Indexes = append(inode.Indexes, tmp)
+	inode.Indexes = make([]DirIndex, inode.IndexCount)
+	err = binary.Read(rdr, binary.LittleEndian, &inode.Indexes)
+	if err != nil {
+		return inode, err
 	}
 	return inode, err
 }
@@ -97,7 +94,7 @@ func NewDirectoryIndex(rdr io.Reader) (DirIndex, error) {
 	if err != nil {
 		return index, err
 	}
-	tmp := make([]byte, index.NameSize+1, index.NameSize+1)
+	tmp := make([]byte, index.NameSize+1)
 	err = binary.Read(rdr, binary.LittleEndian, &tmp)
 	if err != nil {
 		return index, err
@@ -133,7 +130,7 @@ func NewFile(rdr io.Reader, blockSize uint32) (File, error) {
 	if inode.Size%blockSize > 0 {
 		blocks++
 	}
-	inode.BlockSizes = make([]uint32, blocks, blocks)
+	inode.BlockSizes = make([]uint32, blocks)
 	err = binary.Read(rdr, binary.LittleEndian, &inode.BlockSizes)
 	return inode, err
 }
@@ -168,7 +165,7 @@ func NewExtendedFile(rdr io.Reader, blockSize uint32) (ExtFile, error) {
 	if inode.Size%uint64(blockSize) > 0 {
 		blocks++
 	}
-	inode.BlockSizes = make([]uint32, blocks, blocks)
+	inode.BlockSizes = make([]uint32, blocks)
 	err = binary.Read(rdr, binary.LittleEndian, &inode.BlockSizes)
 	return inode, err
 }
@@ -193,7 +190,7 @@ func NewSymlink(rdr io.Reader) (Sym, error) {
 	if err != nil {
 		return inode, err
 	}
-	inode.targetPath = make([]byte, inode.TargetPathSize, inode.TargetPathSize)
+	inode.targetPath = make([]byte, inode.TargetPathSize)
 	err = binary.Read(rdr, binary.LittleEndian, &inode.targetPath)
 	if err != nil {
 		return inode, err
@@ -223,7 +220,7 @@ func NewExtendedSymlink(rdr io.Reader) (ExtSym, error) {
 	if err != nil {
 		return inode, err
 	}
-	inode.targetPath = make([]uint8, inode.TargetPathSize, inode.TargetPathSize)
+	inode.targetPath = make([]uint8, inode.TargetPathSize)
 	err = binary.Read(rdr, binary.LittleEndian, &inode.targetPath)
 	if err != nil {
 		return inode, err

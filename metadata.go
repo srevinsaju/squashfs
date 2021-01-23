@@ -18,12 +18,12 @@ type metadataReader struct {
 	s          *Reader
 	headers    []*metadata
 	data       []byte
-	offset     int64
+	offset     uint64
 	readOffset int
 }
 
 //NewMetadataReader creates a new MetadataReader, beginning to read at the given offset. It will automatically cache the first block at the location.
-func (s *Reader) newMetadataReader(offset int64) (*metadataReader, error) {
+func (s *Reader) newMetadataReader(offset uint64) (*metadataReader, error) {
 	var br metadataReader
 	br.s = s
 	br.offset = offset
@@ -41,7 +41,7 @@ func (s *Reader) newMetadataReader(offset int64) (*metadataReader, error) {
 //NewMetadataReaderFromInodeRef creates a new MetadataReader with the offsets set by the given inode reference.
 func (s *Reader) newMetadataReaderFromInodeRef(ref uint64) (*metadataReader, error) {
 	offset, metaOffset := processInodeRef(ref)
-	br, err := s.newMetadataReader(int64(s.super.InodeTableStart + offset))
+	br, err := s.newMetadataReader(s.super.InodeTableStart + offset)
 	if err != nil {
 		return nil, err
 	}
@@ -65,7 +65,7 @@ func processInodeRef(inodeRef uint64) (tableOffset uint64, metaOffset uint64) {
 
 func (br *metadataReader) parseMetadata() error {
 	var raw uint16
-	err := binary.Read(io.NewSectionReader(br.s.r, br.offset, 2), binary.LittleEndian, &raw)
+	err := binary.Read(io.NewSectionReader(br.s.r, int64(br.offset), 2), binary.LittleEndian, &raw)
 	if err != nil {
 		return err
 	}
@@ -82,13 +82,13 @@ func (br *metadataReader) parseMetadata() error {
 
 func (br *metadataReader) readNextDataBlock() error {
 	meta := br.headers[len(br.headers)-1]
-	r := io.NewSectionReader(br.s.r, br.offset, int64(meta.size))
+	r := io.NewSectionReader(br.s.r, int64(br.offset), int64(meta.size))
 	if meta.compressed {
 		byts, err := br.s.decompressor.Decompress(r)
 		if err != nil {
 			return err
 		}
-		br.offset += int64(meta.size)
+		br.offset += uint64(meta.size)
 		br.data = append(br.data, byts...)
 		return nil
 	}
@@ -97,7 +97,7 @@ func (br *metadataReader) readNextDataBlock() error {
 	if err != nil {
 		return err
 	}
-	br.offset += int64(meta.size)
+	br.offset += uint64(meta.size)
 	br.data = append(br.data, buf.Bytes()...)
 	return nil
 }
