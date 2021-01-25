@@ -47,11 +47,11 @@ func (f FileFS) Open(name string) (fs.File, error) {
 			Err:  err,
 		}
 	}
-	for _, dir := range dirs {
+	for i := 0; i < len(dirs); i++ {
 		var match bool
-		if match, err = path.Match(split[0], dir.Name()); match {
+		if match, err = path.Match(split[0], dirs[i].Name()); match {
 			var info fs.FileInfo
-			info, err = dir.Info()
+			info, err = dirs[i].Info()
 			if err != nil {
 				return nil, &fs.PathError{
 					Op:   "open",

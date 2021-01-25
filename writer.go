@@ -129,15 +129,15 @@ func (w *Writer) AddFileTo(filepath string, file *os.File) error {
 			return err
 		}
 		dirsAdded := make([]string, 0)
-		for _, subDir := range subDirNames {
-			fil, err := os.Open(file.Name() + subDir)
+		for i := 0; i < len(subDirNames); i++ {
+			fil, err := os.Open(file.Name() + subDirNames[i])
 			if err != nil {
 				return err
 			}
 			err = w.AddFileToFolder(holder.path+"/"+holder.name, fil)
 			if err != nil && !w.allowErrors {
-				for _, dir := range dirsAdded {
-					w.Remove(dir)
+				for i := 0; i < len(dirsAdded); i++ {
+					w.Remove(dirsAdded[i])
 				}
 				return err
 			} else if err != nil {
@@ -184,8 +184,8 @@ func (w *Writer) Remove(filepath string) bool {
 	dir, name := path.Split(filepath)
 	for structDir, files := range w.structure {
 		if match, _ := path.Match(dir, structDir); match {
-			for i, fil := range files {
-				if match, _ = path.Match(name, fil.name); match {
+			for i := 0; i < len(files); i++ {
+				if match, _ = path.Match(name, files[i].name); match {
 					matchFound = true
 					if len(w.structure[structDir]) > 1 {
 						w.structure[structDir][i] = w.structure[structDir][len(w.structure[structDir])-1]
@@ -205,13 +205,13 @@ func (w *Writer) Remove(filepath string) bool {
 //If all symlinks can be resolved, the error slice will be nil, and the bool false, otherwise all errors occured will be in the slice.
 func (w *Writer) FixSymlinks() (errs []error, problems bool) {
 	for dir, holderSlice := range w.structure {
-		for i, holder := range holderSlice {
-			if !holder.symlink {
+		for i := 0; i < len(holderSlice); i++ {
+			if !holderSlice[i].symlink {
 				continue
 			}
-			sym := holder.symLocation
-			if !path.IsAbs(holder.symLocation) {
-				sym = path.Join(dir, holder.symLocation)
+			sym := holderSlice[i].symLocation
+			if !path.IsAbs(holderSlice[i].symLocation) {
+				sym = path.Join(dir, holderSlice[i].symLocation)
 			}
 			if path, ok := w.symlinkTable[sym]; ok {
 				w.structure[dir][i].symLocation = path
@@ -221,14 +221,14 @@ func (w *Writer) FixSymlinks() (errs []error, problems bool) {
 				var symFil *os.File
 				var err error
 				if strings.HasPrefix(sym, "../") {
-					holderFil, ok := holder.reader.(*os.File)
+					holderFil, ok := holderSlice[i].reader.(*os.File)
 					if !ok {
 						problems = true
-						errs = append(errs, errors.New("Cannot resolve symlink at "+dir+holder.name))
+						errs = append(errs, errors.New("Cannot resolve symlink at "+dir+holderSlice[i].name))
 						continue
 					}
 					symFilPath := path.Dir(holderFil.Name())
-					symFilPath = path.Join(symFilPath, holder.symLocation)
+					symFilPath = path.Join(symFilPath, holderSlice[i].symLocation)
 					symFil, err = os.Open(symFilPath)
 				} else {
 					symFil, err = os.Open(sym)
@@ -238,34 +238,34 @@ func (w *Writer) FixSymlinks() (errs []error, problems bool) {
 					errs = append(errs, err)
 					continue
 				}
-				suc := w.Remove(dir + holder.name)
+				suc := w.Remove(dir + holderSlice[i].name)
 				if !suc {
 					problems = true
-					errs = append(errs, errors.New("Cannot resolve symlink at "+dir+holder.name))
+					errs = append(errs, errors.New("Cannot resolve symlink at "+dir+holderSlice[i].name))
 					continue
 				}
-				err = w.AddFileTo(dir+holder.name, symFil)
+				err = w.AddFileTo(dir+holderSlice[i].name, symFil)
 				if err != nil {
-					w.structure[dir] = append(w.structure[dir], holder)
+					w.structure[dir] = append(w.structure[dir], holderSlice[i])
 					problems = true
 					errs = append(errs, err)
 					continue
 				}
-				w.symlinkTable[sym] = dir + holder.name
+				w.symlinkTable[sym] = dir + holderSlice[i].name
 			} else {
 				symHolder := w.holderAt(sym)
 				if symHolder != nil {
 					w.symlinkTable[sym] = sym
 					continue
 				}
-				holderFil, ok := holder.reader.(*os.File)
+				holderFil, ok := holderSlice[i].reader.(*os.File)
 				if !ok {
 					problems = true
-					errs = append(errs, errors.New("Cannot resolve symlink at "+dir+holder.name))
+					errs = append(errs, errors.New("Cannot resolve symlink at "+dir+holderSlice[i].name))
 					continue
 				}
 				symFilPath := path.Dir(holderFil.Name())
-				symFilPath = path.Join(symFilPath, holder.symLocation)
+				symFilPath = path.Join(symFilPath, holderSlice[i].symLocation)
 				symFil, err := os.Open(symFilPath)
 				if err != nil {
 					problems = true
@@ -292,9 +292,9 @@ func (w *Writer) holderAt(filepath string) *fileHolder {
 	}
 	dir, name := path.Split(filepath)
 	if holderSlice, ok := w.structure[dir]; ok {
-		for _, holder := range holderSlice {
-			if holder.name == name {
-				return holder
+		for i := 0; i < len(holderSlice); i++ {
+			if holderSlice[i].name == name {
+				return holderSlice[i]
 			}
 		}
 	}
@@ -309,8 +309,8 @@ func (w *Writer) Contains(filepath string) bool {
 	}
 	dir, name := path.Split(filepath)
 	if holderSlice, ok := w.structure[dir]; ok {
-		for _, holder := range holderSlice {
-			if holder.name == name {
+		for i := 0; i < len(holderSlice); i++ {
+			if holderSlice[i].name == name {
 				return true
 			}
 		}

@@ -49,9 +49,7 @@ func (r *Reader) newDataReaderFromInode(i *inode.Inode) (*dataReader, error) {
 			return nil, errInodeOnlyFragment
 		}
 		rdr.offset = int64(fil.BlockStart)
-		for _, sizes := range fil.BlockSizes {
-			rdr.sizes = append(rdr.sizes, sizes)
-		}
+		rdr.sizes = fil.BlockSizes
 		if fil.Fragmented {
 			rdr.sizes = rdr.sizes[:len(rdr.sizes)-1]
 		}
@@ -61,9 +59,7 @@ func (r *Reader) newDataReaderFromInode(i *inode.Inode) (*dataReader, error) {
 			return nil, errInodeOnlyFragment
 		}
 		rdr.offset = int64(fil.BlockStart)
-		for _, sizes := range fil.BlockSizes {
-			rdr.sizes = append(rdr.sizes, sizes)
-		}
+		rdr.sizes = fil.BlockSizes
 		if fil.Fragmented {
 			rdr.sizes = rdr.sizes[:len(rdr.sizes)-1]
 		}
@@ -186,7 +182,7 @@ func (d *dataReader) WriteTo(w io.Writer) (int64, error) {
 		index int
 	}
 	dataChan := make(chan *dataCache)
-	for i := range d.sizes {
+	for i := 0; i < len(d.sizes); i++ {
 		go func(index int, c chan *dataCache) {
 			var cache dataCache
 			cache.index = index
@@ -211,9 +207,9 @@ mainLoop:
 			return totalWrite, nil
 		}
 		if len(backlog) > 0 {
-			for i, cache := range backlog {
-				if cache.index == curIndex {
-					writen, err := w.Write(cache.data)
+			for i := 0; i < len(backlog); i++ {
+				if backlog[i].index == curIndex {
+					writen, err := w.Write(backlog[i].data)
 					totalWrite += int64(writen)
 					if err != nil {
 						return totalWrite, err

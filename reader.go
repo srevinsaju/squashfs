@@ -26,12 +26,10 @@ var (
 	ErrOptions = errors.New("Possibly incompatible compressor options")
 )
 
-//TODO: implement fs.FS, possibly more FS types for compatibility. Most of this work will mostly be handed off to root anyway so this shouldn't be too difficult.
-
 //Reader processes and reads a squashfs archive.
 type Reader struct {
 	*FileFS      //root directory
-	r            io.ReaderAt
+	r            *io.SectionReader
 	decompressor compression.Decompressor
 	fragOffsets  []uint64
 	idTable      []uint32
@@ -42,8 +40,7 @@ type Reader struct {
 //NewSquashfsReader returns a new squashfs.Reader from an io.ReaderAt
 func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 	var rdr Reader
-	rdr.r = r
-	err := binary.Read(io.NewSectionReader(rdr.r, 0, int64(binary.Size(rdr.super))), binary.LittleEndian, &rdr.super)
+	err := binary.Read(io.NewSectionReader(r, 0, 96), binary.LittleEndian, &rdr.super)
 	if err != nil {
 		return nil, err
 	}
@@ -53,13 +50,18 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 	if rdr.super.BlockLog != uint16(math.Log2(float64(rdr.super.BlockSize))) {
 		return nil, errors.New("BlockSize and BlockLog doesn't match. The archive is probably corrupt")
 	}
+	rdr.r = io.NewSectionReader(r, 0, int64(rdr.super.BytesUsed))
+	_, err = rdr.r.Seek(96, io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
 	hasUnsupportedOptions := false
 	rdr.flags = rdr.super.GetFlags()
 	if rdr.flags.compressorOptions {
 		switch rdr.super.CompressionType {
 		case GzipCompression:
 			var gzip *compression.Gzip
-			gzip, err = compression.NewGzipCompressorWithOptions(io.NewSectionReader(rdr.r, int64(binary.Size(rdr.super)), 8))
+			gzip, err = compression.NewGzipCompressorWithOptions(rdr.r)
 			if err != nil {
 				return nil, err
 			}
@@ -69,7 +71,7 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 			rdr.decompressor = gzip
 		case XzCompression:
 			var xz *compression.Xz
-			xz, err = compression.NewXzCompressorWithOptions(io.NewSectionReader(rdr.r, int64(binary.Size(rdr.super)), 8))
+			xz, err = compression.NewXzCompressorWithOptions(rdr.r)
 			if err != nil {
 				return nil, err
 			}
@@ -79,14 +81,14 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 			rdr.decompressor = xz
 		case Lz4Compression:
 			var lz4 *compression.Lz4
-			lz4, err = compression.NewLz4CompressorWithOptions(io.NewSectionReader(rdr.r, int64(binary.Size(rdr.super)), 8))
+			lz4, err = compression.NewLz4CompressorWithOptions(rdr.r)
 			if err != nil {
 				return nil, err
 			}
 			rdr.decompressor = lz4
 		case ZstdCompression:
 			var zstd *compression.Zstd
-			zstd, err = compression.NewZstdCompressorWithOptions(io.NewSectionReader(rdr.r, int64(binary.Size(rdr.super)), 4))
+			zstd, err = compression.NewZstdCompressorWithOptions(rdr.r)
 			if err != nil {
 				return nil, err
 			}
@@ -112,32 +114,43 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 		}
 	}
 	fragBlocks := int(math.Ceil(float64(rdr.super.FragCount) / 512))
+	rdr.fragOffsets = make([]uint64, fragBlocks)
 	if fragBlocks > 0 {
-		offset := int64(rdr.super.FragTableStart)
-		for i := 0; i < fragBlocks; i++ {
-			tmp := make([]byte, 8)
-			_, err = r.ReadAt(tmp, offset)
-			if err != nil {
-				return nil, err
-			}
-			rdr.fragOffsets = append(rdr.fragOffsets, binary.LittleEndian.Uint64(tmp))
-			offset += 8
+		_, err = rdr.r.Seek(int64(rdr.super.FragTableStart), io.SeekStart)
+		if err != nil {
+			return nil, err
+		}
+		err = binary.Read(rdr.r, binary.LittleEndian, &rdr.fragOffsets)
+		if err != nil {
+			return nil, err
 		}
 	}
-	blockOffsets := make([]uint64, int(math.Ceil(float64(rdr.super.IDCount)/2048)))
-	secRdr := io.NewSectionReader(r, int64(rdr.super.IDTableStart), 8)
-	err = binary.Read(secRdr, binary.LittleEndian, &blockOffsets)
+	offsets := rdr.super.IDCount / 2048
+	if rdr.super.IDCount%2048 > 0 {
+		offsets++
+	}
+	blockOffsets := make([]uint64, offsets)
+	_, err = rdr.r.Seek(int64(rdr.super.IDTableStart), io.SeekStart)
+	if err != nil {
+		return nil, err
+	}
+	err = binary.Read(rdr.r, binary.LittleEndian, &blockOffsets)
 	if err != nil {
 		return nil, err
 	}
 	unread := rdr.super.IDCount
-	for _, block := range blockOffsets {
+	for i := 0; i < len(blockOffsets); i++ {
 		var idRdr io.Reader
-		idRdr, err = rdr.newMetadataReader(block)
+		idRdr, err = rdr.newMetadataReader(blockOffsets[i])
 		if err != nil {
 			return nil, err
 		}
-		read := uint16(math.Min(float64(unread), 2048))
+		var read uint16
+		if unread > 2048 {
+			read = 2048
+		} else {
+			read = unread
+		}
 		tmpSlice := make([]uint32, read)
 		err = binary.Read(idRdr, binary.LittleEndian, &tmpSlice)
 		if err != nil {

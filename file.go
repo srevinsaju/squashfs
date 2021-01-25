@@ -263,8 +263,8 @@ func (f *File) ExtractWithOptions(dir string, options ExtractionOptions) (errs [
 				errs = append(errs, err)
 			}
 		}
-		var children []fs.DirEntry
-		children, err = f.ReadDir(0)
+		var entries []fs.DirEntry
+		entries, err = f.ReadDir(0)
 		if err != nil {
 			if options.Verbose {
 				fmt.Println("Error getting children for:", f.Name())
@@ -274,21 +274,20 @@ func (f *File) ExtractWithOptions(dir string, options ExtractionOptions) (errs [
 			return
 		}
 		finishChan := make(chan []error)
-		for _, child := range children {
+		for i := 0; i < len(entries); i++ {
 			go func(child fs.DirEntry) {
 				info, infErr := child.Info()
 				if err != nil {
 					finishChan <- []error{infErr}
 				}
-
 				if f.name == "" {
 					finishChan <- info.(*File).ExtractWithOptions(dir, options)
 				} else {
 					finishChan <- info.(*File).ExtractWithOptions(dir+"/"+f.name, options)
 				}
-			}(child)
+			}(entries[i])
 		}
-		for range children {
+		for i := 0; i < len(entries); i++ {
 			errs = append(errs, (<-finishChan)...)
 		}
 		return
