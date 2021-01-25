@@ -30,7 +30,7 @@ var (
 
 //Reader processes and reads a squashfs archive.
 type Reader struct {
-	*File        //root directory
+	*FileFS      //root directory
 	r            io.ReaderAt
 	decompressor compression.Decompressor
 	fragOffsets  []uint64
@@ -154,10 +154,14 @@ func NewSquashfsReader(r io.ReaderAt) (*Reader, error) {
 	if err != nil {
 		return nil, err
 	}
-	rdr.File = new(File)
-	rdr.File.dir = "/"
-	rdr.File.in = rootIn
-	rdr.File.r = &rdr
+	rootFil, err := rdr.newFileFromInode(rootIn)
+	if err != nil {
+		return nil, err
+	}
+	rdr.FileFS, err = rootFil.AsFS()
+	if err != nil {
+		return nil, err
+	}
 	if hasUnsupportedOptions {
 		return &rdr, ErrOptions
 	}

@@ -33,15 +33,17 @@ func TestSquashfs(t *testing.T) {
 		t.Fatal(err)
 	}
 	fmt.Println("stuff", rdr.super.CompressionType)
-	fil := rdr.GetFileAtPath("*.desktop")
-	if fil == nil {
-		t.Fatal("Can't find desktop fil")
+	fil, err := rdr.Open("*.desktop")
+	if err != nil {
+		t.Fatal(err)
 	}
-	errs := fil.ExtractTo(wd + "/testing")
+	op := DefaultExtractionOptions()
+	op.Verbose = true
+	errs := fil.(*File).ExtractWithOptions(wd+"/testing", op)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
-	errs = rdr.ExtractTo(wd + "/testing/" + squashfsName + ".d")
+	errs = rdr.ExtractWithOptions(wd+"/testing/"+squashfsName+".d", op)
 	if len(errs) > 0 {
 		t.Fatal(errs)
 	}
@@ -70,9 +72,16 @@ func TestAppImage(t *testing.T) {
 	defer aiFil.Close()
 	stat, _ := aiFil.Stat()
 	ai := goappimage.NewAppImage(wd + "/testing/" + appImageName)
-	_, err = NewSquashfsReader(io.NewSectionReader(aiFil, ai.Offset, stat.Size()-ai.Offset))
+	op := DefaultExtractionOptions()
+	op.Verbose = true
+	rdr, err := NewSquashfsReader(io.NewSectionReader(aiFil, ai.Offset, stat.Size()-ai.Offset))
 	if err != nil {
 		t.Fatal(err)
+	}
+	os.RemoveAll(wd + "/testing/firefox")
+	errs := rdr.ExtractWithOptions(wd+"/testing/firefox", op)
+	if len(errs) > 0 {
+		t.Fatal(errs)
 	}
 	t.Fatal("No problemo!")
 }
